@@ -1,0 +1,273 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/marketplace_seguros/app/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// NextAuth Models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String?
+  emailVerified DateTime?
+  image         String?
+  role          String    @default("user")
+  phone         String?
+  document      String?   // ID/DNI/RUT/CURP
+  countryId     String?
+  accounts      Account[]
+  sessions      Session[]
+  quotes        Quote[]
+  carts         Cart[]
+  orders        Order[]
+  policies      Policy[]
+  country       Country?  @relation(fields: [countryId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Marketplace Models
+model Country {
+  id              String            @id @default(cuid())
+  name            String
+  code            String            @unique // MX, AR, CL, PE
+  currency        String            // MXN, ARS, CLP, PEN
+  currencySymbol  String            // $, S/
+  active          Boolean           @default(true)
+  users           User[]
+  products        InsuranceProduct[]
+  quotes          Quote[]
+  orders          Order[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@map("countries")
+}
+
+model InsuranceType {
+  id          String            @id @default(cuid())
+  name        String            // Auto, Vida, Salud, Viaje, Accidentes
+  slug        String            @unique
+  description String?
+  icon        String?           // lucide icon name
+  active      Boolean           @default(true)
+  products    InsuranceProduct[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@map("insurance_types")
+}
+
+model InsuranceProduct {
+  id              String      @id @default(cuid())
+  name            String
+  slug            String      @unique
+  description     String?
+  basePrice       Decimal
+  currency        String
+  insuranceTypeId String
+  countryId       String
+  company         String      // Nombre de la aseguradora
+  companyLogo     String?     // URL del logo
+  features        Json        // Array de características
+  coverage        Json        // Detalles de cobertura
+  deductible      Decimal?
+  minAge          Int?
+  maxAge          Int?
+  active          Boolean     @default(true)
+  
+  insuranceType   InsuranceType @relation(fields: [insuranceTypeId], references: [id])
+  country         Country       @relation(fields: [countryId], references: [id])
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+  quotes          Quote[]
+  policies        Policy[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("insurance_products")
+}
+
+model Quote {
+  id                String            @id @default(cuid())
+  userId            String?
+  email             String?           // Para quotes sin registro
+  productId         String
+  personalData      Json              // Datos del cotizante
+  vehicleData       Json?             // Para seguros de auto
+  beneficiaryData   Json?             // Para seguros de vida
+  travelData        Json?             // Para seguros de viaje
+  healthData        Json?             // Para seguros de salud
+  calculatedPrice   Decimal
+  validUntil        DateTime
+  status            String            @default("active") // active, expired, converted
+  countryId         String
+  
+  user              User?             @relation(fields: [userId], references: [id])
+  product           InsuranceProduct  @relation(fields: [productId], references: [id])
+  country           Country           @relation(fields: [countryId], references: [id])
+  
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@map("quotes")
+}
+
+model Cart {
+  id        String     @id @default(cuid())
+  userId    String     @unique
+  items     CartItem[]
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String           @id @default(cuid())
+  cartId    String
+  productId String
+  quoteId   String?          // Referencia a la cotización
+  quantity  Int              @default(1)
+  price     Decimal          // Precio al momento de agregar al carrito
+  data      Json?            // Datos específicos del seguro
+  
+  cart      Cart             @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product   InsuranceProduct @relation(fields: [productId], references: [id])
+  
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@map("cart_items")
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  userId          String
+  orderNumber     String      @unique
+  status          String      @default("pending") // pending, paid, processing, completed, cancelled
+  subtotal        Decimal
+  taxes           Decimal     @default(0)
+  total           Decimal
+  currency        String
+  countryId       String
+  
+  // Datos del comprador
+  buyerName       String
+  buyerEmail      String
+  buyerPhone      String?
+  buyerDocument   String?
+  
+  // Información de pago
+  paymentStatus   String      @default("pending") // pending, paid, failed, refunded
+  paymentMethod   String?     // stripe, etc
+  paymentId       String?     // ID del pago en Stripe
+  stripeSessionId String?
+  
+  items           OrderItem[]
+  policies        Policy[]
+  user            User        @relation(fields: [userId], references: [id])
+  country         Country     @relation(fields: [countryId], references: [id])
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String           @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int              @default(1)
+  price     Decimal          // Precio al momento de la compra
+  data      Json?            // Datos específicos del seguro contratado
+  
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   InsuranceProduct @relation(fields: [productId], references: [id])
+  
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@map("order_items")
+}
+
+model Policy {
+  id            String           @id @default(cuid())
+  userId        String
+  orderId       String
+  productId     String
+  policyNumber  String           @unique
+  status        String           @default("active") // active, cancelled, expired
+  startDate     DateTime
+  endDate       DateTime
+  premium       Decimal
+  beneficiary   Json?            // Datos del beneficiario
+  coverage      Json             // Detalles de cobertura específicos
+  documents     Json?            // URLs de documentos (póliza PDF, certificados)
+  
+  user          User             @relation(fields: [userId], references: [id])
+  order         Order            @relation(fields: [orderId], references: [id])
+  product       InsuranceProduct @relation(fields: [productId], references: [id])
+  
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@map("policies")
+}
+
+model PaymentConfig {
+  id                String   @id @default(cuid())
+  countryId         String   @unique
+  stripePublishableKey String?
+  stripeSecretKey   String?
+  active            Boolean  @default(true)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("payment_configs")
+}
